@@ -72,16 +72,80 @@
   </div>
 
   <script>
+// ======== 页面加载时恢复登录状态 ========
+document.addEventListener('DOMContentLoaded', function() {
+  const savedUser = localStorage.getItem('cattle_warehouse_current_user');
+  if (savedUser) {
+    try {
+      currentUser = JSON.parse(savedUser);
+      if (currentUser) {
+        document.getElementById('login-page').style.display = 'none';
+        document.getElementById('header').classList.remove('hidden');
+        document.getElementById('sidebar').classList.remove('hidden');
+        document.getElementById('footer').classList.remove('hidden');
+        document.getElementById('current-user').textContent = currentUser.name || currentUser.username;
+        buildMenu();
+        showPage('dashboard');
+      }
+    } catch (e) {
+      localStorage.removeItem('cattle_warehouse_current_user');
+    }
+  }
+});
+
+// ======== 登录成功时保存用户 ========
+function login(e) {
+  e.preventDefault();
+  const form = e.target;
+  const data = new FormData(form);
+  const users = getUsers();
+  const staff = getStaff();
+  const allUsers = [...users, ...staff];
+  const user = allUsers.find(u => u.username === data.get('username') && u.password === data.get('password'));
+  if (user) {
+    currentUser = user;
+    localStorage.setItem('cattle_warehouse_current_user', JSON.stringify(user));
+    document.getElementById('login-page').style.display = 'none';
+    document.getElementById('header').classList.remove('hidden');
+    document.getElementById('sidebar').classList.remove('hidden');
+    document.getElementById('footer').classList.remove('hidden');
+    document.getElementById('current-user').textContent = user.name || user.username;
+    buildMenu();
+    showPage('dashboard');
+  } else {
+    alert('❌ 用户名或密码错误');
+  }
+}
+
+// ======== 退出时清除登录状态 ========
+function logout() {
+  currentUser = null;
+  localStorage.removeItem('cattle_warehouse_current_user');
+  document.getElementById('header').classList.add('hidden');
+  document.getElementById('sidebar').classList.add('hidden');
+  document.getElementById('footer').classList.add('hidden');
+  document.getElementById('login-page').style.display = 'block';
+}
     // ======== 数据库模拟 =========
-    const DB_KEY_DATA = 'cattle_warehouse_data_v3';
-    const DB_KEY_USERS = 'cattle_warehouse_users_v3';
-    const DB_KEY_STAFF = 'cattle_warehouse_staff_v3';
+    const DB_KEY_DATA = 'cattle_warehouse_data_v6';
+    const DB_KEY_USERS = 'cattle_warehouse_users_v6';
+    const DB_KEY_STAFF = 'cattle_warehouse_staff_v6';
+    const DB_KEY_FACILITY = 'cattle_warehouse_facility_v6'; // 新增：设施数据
 
     function getData() {
       return JSON.parse(localStorage.getItem(DB_KEY_DATA) || '[]');
     }
     function saveData(data) {
       localStorage.setItem(DB_KEY_DATA, JSON.stringify(data));
+      triggerSync();
+    }
+
+    function getFacilityData() {
+      return JSON.parse(localStorage.getItem(DB_KEY_FACILITY) || '[]');
+    }
+    function saveFacilityData(data) {
+      localStorage.setItem(DB_KEY_FACILITY, JSON.stringify(data));
+      triggerSync();
     }
 
     function getUsers() {
@@ -99,41 +163,35 @@
     }
     function saveStaff(data) {
       localStorage.setItem(DB_KEY_STAFF, JSON.stringify(data));
+      triggerSync();
     }
+
+    // 数据同步提示
+  function triggerSync() {
+  if (!window.refreshing) {
+    window.refreshing = true;
+    setTimeout(() => {
+      const msg = '检测到数据更新！点击“确定”刷新页面以同步最新数据。\n（取消将保持当前视图）';
+      if (confirm(msg)) {
+        location.reload();
+      }
+      window.refreshing = false;
+    }, 800);
+  }
+}
+
+    // 监听其他标签页的数据变化
+    window.addEventListener('storage', function(e) {
+      if (['cattle_warehouse_data_v6', 'cattle_warehouse_facility_v6', 'cattle_warehouse_staff_v6'].includes(e.key)) {
+        if (confirm('数据在其他标签页已更新，是否刷新页面以同步？')) {
+          location.reload();
+        }
+      }
+    });
 
     // 当前登录用户
     let currentUser = null;
 
-    // ========= 登录与权限 =========
-    function login(e) {
-      e.preventDefault();
-      const form = e.target;
-      const data = new FormData(form);
-      const users = getUsers();
-      const staff = getStaff();
-      const allUsers = [...users, ...staff];
-      const user = allUsers.find(u => u.username === data.get('username') && u.password === data.get('password'));
-      if (user) {
-        currentUser = user;
-        document.getElementById('login-page').style.display = 'none';
-        document.getElementById('header').classList.remove('hidden');
-        document.getElementById('sidebar').classList.remove('hidden');
-        document.getElementById('footer').classList.remove('hidden');
-        document.getElementById('current-user').textContent = user.name || user.username;
-        buildMenu();
-        showPage('dashboard');
-      } else {
-        alert('❌ 用户名或密码错误');
-      }
-    }
-
-    function logout() {
-      currentUser = null;
-      document.getElementById('header').classList.add('hidden');
-      document.getElementById('sidebar').classList.add('hidden');
-      document.getElementById('footer').classList.add('hidden');
-      document.getElementById('login-page').style.display = 'block';
-    }
 
     // 构建菜单
     function buildMenu() {
@@ -210,314 +268,423 @@
     }
 
     // ========= 页面切换 =========
-    function showPage(page) {
-      const content = document.getElementById('main-content');
-      const cattleList = getData();
-      const staffList = getStaff();
+function showPage(page) {
+  const content = document.getElementById('main-content');
+  
+  // 如果未登录，只允许访问登录页
+  if (!currentUser) {
+    if (page !== 'dashboard') {
+      content.innerHTML = `
+        <div class="bg-white p-8 rounded-2xl card text-center">
+          <h2 class="text-2xl font-bold text-gray-700 mb-2">请先登录</h2>
+          <p class="text-gray-500">登录后可使用系统功能</p>
+        </div>
+      `;
+    }
+    return;
+  }
 
-      // ======== 清除旧内容 ========
-      content.innerHTML = '';
+  const cattleList = getData();
+  const staffList = getStaff();
 
-      // ======== 根据 page 显示内容 ========
-      switch (page) {
-        case 'dashboard':
-          content.innerHTML = `
-            <div class="bg-white p-8 rounded-2xl card text-center">
-              <i class="ti ti-cow text-8xl text-blue-400 mb-4"></i>
-              <h2 class="text-3xl font-bold text-gray-700 mb-2">欢迎使用</h2>
-              <p class="text-gray-500">当前登录：${currentUser.name || currentUser.username}（${currentUser.role === 'admin' ? '管理员' : '办事人员'}）</p>
-            </div>
-          `;
-          break;
+  switch (page) {
+    case 'dashboard':
+      content.innerHTML = `
+        <div class="bg-white p-8 rounded-2xl card text-center">
+          <i class="ti ti-cow text-8xl text-blue-400 mb-4"></i>
+          <h2 class="text-3xl font-bold text-gray-700 mb-2">欢迎使用</h2>
+          <p class="text-gray-500">当前登录：${currentUser.name || currentUser.username}（${currentUser.role === 'admin' ? '管理员' : '办事人员'}）</p>
+        </div>
+      `;
+      break;
 
-        case 'entry':
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <i class="ti ti-truck-in"></i> 活牛进仓登记（支持批量）
-              </h2>
-              <form onsubmit="handleEntry(event)" class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <input required name="owner" placeholder="牛主姓名/单位" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
-                  <input required name="batchId" placeholder="批次编号（自动生成）" value="B${Date.now()}" readonly class="p-3 border border-gray-300 rounded-lg bg-gray-100"/>
-                </div>
-                <div id="cattle-entries">
-                  <div class="cattle-item grid grid-cols-1 md:grid-cols-5 gap-2 mb-2 border-b pb-2">
-                    <input required name="rfid" placeholder="RFID编号" class="p-2 border border-gray-300 rounded"/>
-                    <input required name="breed" placeholder="品种" class="p-2 border border-gray-300 rounded"/>
-                    <select name="gender" class="p-2 border border-gray-300 rounded">
-                      <option value="">性别（可选）</option>
-                      <option value="公">公</option>
-                      <option value="母">母</option>
-                      <option value="未知">未知</option>
-                    </select>
-                    <input required type="number" name="weight" placeholder="体重（kg）" class="p-2 border border-gray-300 rounded"/>
-                    <select required name="location" class="p-2 border border-gray-300 rounded">
-                      <option value="">栏位</option>
-                      <option value="A区-01">A区-01</option>
-                      <option value="A区-02">A区-02</option>
-                      <option value="B区-01">B区-01</option>
-                      <option value="B区-02">B区-02</option>
-                    </select>
-                  </div>
-                </div>
-                <button type="button" onclick="addCattleEntry()" class="text-blue-600 text-sm">+ 添加一头牛</button>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <input required type="date" name="entryDate" class="p-3 border border-gray-300 rounded-lg"/>
-                  <input required name="inspectionCert" placeholder="检疫证编号（扫码录入）" class="p-3 border border-gray-300 rounded-lg"/>
-                  <input required name="vehicleInfo" placeholder="运输车辆信息" class="p-3 border border-gray-300 rounded-lg"/>
-                </div>
-                <div class="bg-gray-100 p-3 rounded-lg text-sm">
-                  <strong>统计：</strong> 
-                  <span id="summary">头数：1，总重量：<span id="totalWeight">0</span> kg</span>
-                </div>
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition">
-                  <i class="ti ti-device-floppy"></i> 提交进仓（共 <span id="totalCount">1</span> 头）
-                </button>
-              </form>
-              <div class="mt-4 hidden-print" id="print-entry" style="display:none;">
-                <h3 class="font-bold text-gray-700 mb-3">进仓单预览</h3>
-                <div id="entry-print-content"></div>
-                <button onclick="printCurrentDiv('活牛进仓单')" class="mt-3 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded flex items-center gap-1">
-                  <i class="ti ti-printer"></i> 打印进仓单
-                </button>
+    case 'entry':
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <i class="ti ti-truck-in"></i> 活牛进仓登记（支持批量）
+          </h2>
+          <form onsubmit="handleEntry(event)" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <input required name="owner" placeholder="牛主姓名/单位" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
+              <div class="flex gap-2">
+                <input required name="batchId" id="batchId" value="B${Date.now()}" class="p-3 border border-gray-300 rounded-lg flex-1"/>
+                <button type="button" onclick="generateBatchId()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 rounded">重新生成</button>
               </div>
             </div>
-          `;
-          setTimeout(() => updateSummary(), 100);
-          break;
-
-        case 'list':
-          const tableRows = cattleList.map(cow => {
-            const lastFeed = cow.feedRecords?.length > 0 ? cow.feedRecords[cow.feedRecords.length - 1].date : '未记录';
-            return `
-              <tr class="border-b hover:bg-gray-50">
-                <td class="p-3">${cow.id}</td>
-                <td>${cow.rfid}</td>
-                <td>${cow.breed}</td>
-                <td>${cow.location}</td>
-                <td><span class="px-2 py-1 rounded-full text-xs ${cow.health.includes('正常') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${cow.health}</span></td>
-                <td>${lastFeed}</td>
-                <td>${cow.status === '已出仓' ? cow.exitDate : '在栏'}</td>
-              </tr>
-            `;
-          }).join('');
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <i class="ti ti-list"></i> 牛只列表（共 ${cattleList.length} 头）
-              </h2>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <select onchange="filterByLocation(this.value)" class="p-3 border border-gray-300 rounded-lg">
-                  <option value="">全部仓位</option>
+            <div id="cattle-entries">
+              <div class="cattle-item grid grid-cols-1 md:grid-cols-5 gap-2 mb-2 border-b pb-2">
+                <input required name="rfid" placeholder="RFID编号" class="p-2 border border-gray-300 rounded"/>
+                <input required name="breed" placeholder="品种" class="p-2 border border-gray-300 rounded"/>
+                <select name="gender" class="p-2 border border-gray-300 rounded">
+                  <option value="">性别（可选）</option>
+                  <option value="公">公</option>
+                  <option value="母">母</option>
+                  <option value="未知">未知</option>
+                </select>
+                <input required type="number" name="weight" placeholder="体重（kg）" class="p-2 border border-gray-300 rounded"/>
+                <select required name="location" class="p-2 border border-gray-300 rounded">
+                  <option value="">栏位</option>
                   <option value="A区-01">A区-01</option>
                   <option value="A区-02">A区-02</option>
                   <option value="B区-01">B区-01</option>
                   <option value="B区-02">B区-02</option>
                 </select>
-                <input oninput="filterByHealth(this.value)" placeholder="按健康状态筛选" class="p-3 border border-gray-300 rounded-lg"/>
-                <input oninput="filterByBreed(this.value)" placeholder="按品种筛选" class="p-3 border border-gray-300 rounded-lg"/>
-              </div>
-              <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="bg-gray-50 border-b font-semibold text-gray-700">
-                      <td class="p-3">牛只ID</td>
-                      <td>RFID</td>
-                      <td>品种</td>
-                      <td>仓位</td>
-                      <td>健康</td>
-                      <td>最后饲喂</td>
-                      <td>出仓时间</td>
-                    </tr>
-                  </thead>
-                  <tbody id="list-body">${tableRows}</tbody>
-                </table>
-              </div>
-              <div class="mt-6 flex flex-wrap gap-3">
-                <button onclick="exportCattleList()" class="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded flex items-center gap-1">
-                  <i class="ti ti-file-export"></i> 导出为 Excel
-                </button>
-                <button onclick="printCurrentDiv('活牛保供仓 - 牛只列表')" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded flex items-center gap-1">
-                  <i class="ti ti-printer"></i> 打印列表
-                </button>
               </div>
             </div>
-          `;
-          break;
-
-        case 'search':
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <i class="ti ti-search"></i> 信息查询
-              </h2>
-              <div class="space-y-4">
-                <select onchange="showCattleByLocation(this.value)" class="p-3 border border-gray-300 rounded-lg w-full">
-                  <option value="">请选择仓位</option>
-                  <option value="A区-01">A区-01</option>
-                  <option value="A区-02">A区-02</option>
-                  <option value="B区-01">B区-01</option>
-                  <option value="B区-02">B区-02</option>
-                </select>
-                <div id="search-result" class="text-center text-gray-500 py-8">请选择仓位查看牛只</div>
-              </div>
+            <button type="button" onclick="addCattleEntry()" class="text-blue-600 text-sm">+ 添加一头牛</button>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <input required type="date" name="entryDate" class="p-3 border border-gray-300 rounded-lg"/>
+              <input required name="inspectionCert" placeholder="检疫证编号（扫码录入）" class="p-3 border border-gray-300 rounded-lg"/>
+              <input required name="vehicleInfo" placeholder="运输车辆信息" class="p-3 border border-gray-300 rounded-lg"/>
             </div>
-          `;
-          break;
-
-        case 'exit':
-          const availableCows = cattleList.filter(c => c.status === '在栏');
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <i class="ti ti-truck-out"></i> 出仓管理（支持批量）
-              </h2>
-              <form onsubmit="handleExit(event)" class="space-y-4">
-                <div id="exit-entries">
-                  <div class="exit-item grid grid-cols-1 md:grid-cols-5 gap-2 mb-2 border-b pb-2">
-                    <select required name="cowId" class="p-2 border border-gray-300 rounded">
-                      <option value="">选择牛只</option>
-                      ${availableCows.map(c => `<option value="${c.id}">${c.id} - ${c.breed}</option>`).join('')}
-                    </select>
-                    <input required type="number" name="finalWeight" placeholder="出仓体重（kg）" class="p-2 border border-gray-300 rounded"/>
-                    <input required type="date" name="exitDate" class="p-2 border border-gray-300 rounded"/>
-                    <input required name="destination" placeholder="运出单位" class="p-2 border border-gray-300 rounded"/>
-                    <input required name="inspectionCert" placeholder="检疫证编号" class="p-2 border border-gray-300 rounded"/>
-                  </div>
-                </div>
-                <button type="button" onclick="addExitEntry()" class="text-blue-600 text-sm">+ 添加一头牛</button>
-                <input required name="vehicleInfo" placeholder="运输车辆信息" class="p-3 border border-gray-300 rounded-lg w-full"/>
-                <div class="bg-gray-100 p-3 rounded-lg text-sm">
-                  <strong>统计：</strong> 
-                  <span id="exitSummary">头数：1，总重量：<span id="exitTotalWeight">0</span> kg</span>
-                </div>
-                <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition">
-                  <i class="ti ti-check"></i> 确认出仓（共 <span id="exitCount">1</span> 头）
-                </button>
-              </form>
-              <div class="mt-4 hidden-print" id="print-exit" style="display:none;">
-                <h3 class="font-bold text-gray-700 mb-3">出仓单预览</h3>
-                <div id="exit-print-content"></div>
-                <button onclick="printCurrentDiv('活牛出仓单')" class="mt-3 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded flex items-center gap-1">
-                  <i class="ti ti-printer"></i> 打印出仓单
-                </button>
-              </div>
+            <div class="bg-gray-100 p-3 rounded-lg text-sm">
+              <strong>统计：</strong> 
+              <span id="summary">头数：1，总重量：<span id="totalWeight">0</span> kg</span>
             </div>
-          `;
-          setTimeout(() => updateExitSummary(), 100);
-          break;
+            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition">
+              <i class="ti ti-device-floppy"></i> 提交进仓（共 <span id="totalCount">1</span> 头）
+            </button>
+          </form>
+          <div class="mt-4 hidden-print" id="print-entry" style="display:none;">
+            <h3 class="font-bold text-gray-700 mb-3">进仓单预览</h3>
+            <div id="entry-print-content"></div>
+            <button onclick="printCurrentDiv('活牛进仓单')" class="mt-3 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded flex items-center gap-1">
+              <i class="ti ti-printer"></i> 打印进仓单
+            </button>
+          </div>
+        </div>
+      `;
+      setTimeout(() => updateSummary(), 100);
+      break;
 
-        case 'transfer':
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <i class="ti ti-exchange"></i> 活牛调仓
-              </h2>
-              <div class="space-y-4">
-                <select onchange="showCattleForTransfer(this.value)" class="p-3 border border-gray-300 rounded-lg w-full">
-                  <option value="">请选择原仓位</option>
-                  <option value="A区-01">A区-01</option>
-                  <option value="A区-02">A区-02</option>
-                  <option value="B区-01">B区-01</option>
-                  <option value="B区-02">B区-02</option>
-                </select>
-                <select id="transfer-cow-select" class="p-3 border border-gray-300 rounded-lg w-full" disabled>
-                  <option value="">请先选择仓位</option>
-                </select>
-                <select id="newLocation" class="p-3 border border-gray-300 rounded-lg w-full">
-                  <option value="">请选择目标仓位</option>
-                  <option value="A区-01">A区-01</option>
-                  <option value="A区-02">A区-02</option>
-                  <option value="B区-01">B区-01</option>
-                  <option value="B区-02">B区-02</option>
-                </select>
-                <button onclick="handleTransferSubmit()" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-lg transition">
-                  <i class="ti ti-arrow-right"></i> 确认调仓
-                </button>
-              </div>
+    case 'list':
+      const tableRows = cattleList.map(cow => {
+        const lastFeed = cow.feedRecords?.length > 0 ? cow.feedRecords[cow.feedRecords.length - 1].date : '未记录';
+        return `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="p-3">${cow.id}</td>
+            <td>${cow.rfid}</td>
+            <td>${cow.breed}</td>
+            <td>${cow.location}</td>
+            <td>${cow.entryDate}</td>
+            <td><span class="px-2 py-1 rounded-full text-xs ${cow.health === '健康' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${cow.health}</span></td>
+            <td>${lastFeed}</td>
+            <td>${cow.status === '已出仓' ? cow.exitDate : '在栏'}</td>
+          </tr>
+        `;
+      }).join('');
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <i class="ti ti-list"></i> 牛只列表（共 ${cattleList.length} 头）
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <select onchange="filterByLocation(this.value)" class="p-3 border border-gray-300 rounded-lg">
+              <option value="">全部仓位</option>
+              <option value="A区-01">A区-01</option>
+              <option value="A区-02">A区-02</option>
+              <option value="B区-01">B区-01</option>
+              <option value="B区-02">B区-02</option>
+            </select>
+            <input oninput="filterByHealth(this.value)" placeholder="按健康状态筛选" class="p-3 border border-gray-300 rounded-lg"/>
+            <input oninput="filterByBreed(this.value)" placeholder="按品种筛选" class="p-3 border border-gray-300 rounded-lg"/>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-gray-50 border-b font-semibold text-gray-700">
+                  <td class="p-3">牛只ID</td>
+                  <td>RFID</td>
+                  <td>品种</td>
+                  <td>仓位</td>
+                  <td>进仓时间</td>
+                  <td>健康</td>
+                  <td>最后饲喂</td>
+                  <td>出仓时间</td>
+                </tr>
+              </thead>
+              <tbody id="list-body">${tableRows}</tbody>
+            </table>
+          </div>
+          <div class="mt-6 flex flex-wrap gap-3">
+            <button onclick="exportCattleList()" class="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded flex items-center gap-1">
+              <i class="ti ti-file-export"></i> 导出为 Excel
+            </button>
+            <button onclick="printCurrentDiv('活牛保供仓 - 牛只列表')" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded flex items-center gap-1">
+              <i class="ti ti-printer"></i> 打印列表
+            </button>
+          </div>
+        </div>
+      `;
+      break;
+
+    case 'search':
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <i class="ti ti-search"></i> 信息查询
+          </h2>
+          <div class="space-y-4">
+            <select onchange="showCattleByLocation(this.value)" class="p-3 border border-gray-300 rounded-lg w-full">
+              <option value="">请选择仓位</option>
+              <option value="A区-01">A区-01</option>
+              <option value="A区-02">A区-02</option>
+              <option value="B区-01">B区-01</option>
+              <option value="B区-02">B区-02</option>
+            </select>
+            <div id="search-result" class="text-center text-gray-500 py-8">请选择仓位查看牛只</div>
+          </div>
+        </div>
+      `;
+      break;
+
+    case 'exit':
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <i class="ti ti-truck-out"></i> 出仓管理
+          </h2>
+          <div class="space-y-4">
+            <select onchange="showCattleForExit(this.value)" class="p-3 border border-gray-300 rounded-lg w-full">
+              <option value="">请选择原仓位</option>
+              <option value="A区-01">A区-01</option>
+              <option value="A区-02">A区-02</option>
+              <option value="B区-01">B区-01</option>
+              <option value="B区-02">B区-02</option>
+            </select>
+            <select id="exit-cow-select" class="p-3 border border-gray-300 rounded-lg w-full" disabled>
+              <option value="">请先选择仓位</option>
+            </select>
+            <input required type="date" id="exitDate" class="p-3 border border-gray-300 rounded-lg w-full" value="${new Date().toISOString().split('T')[0]}"/>
+            <input required id="destination" placeholder="运出单位" class="p-3 border border-gray-300 rounded-lg w-full"/>
+            <input required type="number" id="finalWeight" placeholder="出仓体重（kg）" class="p-3 border border-gray-300 rounded-lg w-full"/>
+            <input required id="inspectionCert" placeholder="检疫证编号（扫码录入）" class="p-3 border border-gray-300 rounded-lg w-full"/>
+            <input required id="vehicleInfo" placeholder="运输车辆信息" class="p-3 border border-gray-300 rounded-lg w-full"/>
+            <input required id="exitOperator" placeholder="出仓负责人" class="p-3 border border-gray-300 rounded-lg w-full" value="${(currentUser && (currentUser.name || currentUser.username)) || ''}"/>
+            <button onclick="handleExitSubmit()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition">
+              <i class="ti ti-check"></i> 确认出仓
+            </button>
+            <div class="mt-6 flex gap-3">
+              <div class="mt-6 border-t pt-4">
+               <h3 class="font-bold text-lg mb-3">查询历史出仓记录</h3>
+               <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+    <select id="exit-filter-location" class="p-3 border border-gray-300 rounded-lg">
+      <option value="">全部仓位</option>
+      <option value="A区-01">A区-01</option>
+      <option value="A区-02">A区-02</option>
+      <option value="B区-01">B区-01</option>
+      <option value="B区-02">B区-02</option>
+    </select>
+    <input type="date" id="exit-filter-date" class="p-3 border border-gray-300 rounded-lg"/>
+    <input placeholder="运出单位" id="exit-filter-destination" class="p-3 border border-gray-300 rounded-lg"/>
+    <input placeholder="检疫证编号" id="exit-filter-cert" class="p-3 border border-gray-300 rounded-lg"/>
+    <input placeholder="运输车辆信息" id="exit-filter-vehicle" class="p-3 border border-gray-300 rounded-lg"/>
+    <button onclick="filterExitRecords()" class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded">查询</button>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm" id="exit-records-table">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="p-3">牛只ID</th>
+          <th>品种</th>
+          <th>出仓日期</th>
+          <th>运出单位</th>
+          <th>体重(kg)</th>
+          <th>车辆</th>
+          <th>负责人</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- 数据由 JS 填充 -->
+      </tbody>
+    </table>
+  </div>
+  <div class="mt-4">
+    <button onclick="exportExitList()" class="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded flex items-center gap-1 mr-2">
+      <i class="ti ti-file-export"></i> 导出查询结果
+    </button>
+    <button onclick="printCurrentDiv('历史出仓记录')" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded flex items-center gap-1">
+      <i class="ti ti-printer"></i> 打印查询结果
+    </button>
+  </div>
+</div>
+              
             </div>
-          `;
-          break;
+          </div>
+          <div class="mt-4 hidden-print" id="print-exit" style="display:none;">
+            <h3 class="font-bold text-gray-700 mb-3">出仓单预览</h3>
+            <div id="exit-print-content"></div>
+            <button onclick="printCurrentDiv('活牛出仓单')" class="mt-3 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded flex items-center gap-1">
+              <i class="ti ti-printer"></i> 打印出仓单
+            </button>
+          </div>
+        </div>
+      `;
+      break;
 
-        case 'infrastructure':
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <i class="ti ti-building"></i> 仓库设施管理
-              </h2>
-              <form onsubmit="handleInfrastructure(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input required name="date" type="date" value="${new Date().toISOString().split('T')[0]}" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required name="waterUsage" placeholder="今日用水量（吨）" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required name="electricityUsage" placeholder="今日用电量（度）" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required name="networkStatus" placeholder="网络状态（正常/异常）" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required name="temperature" placeholder="仓内温度（℃）" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required name="humidity" placeholder="仓内湿度（%）" class="p-3 border border-gray-300 rounded-lg"/>
-                <div class="md:col-span-2">
-                  <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 px-6 rounded-lg transition">
-                    <i class="ti ti-save"></i> 保存设施数据
-                  </button>
-                </div>
-              </form>
+    case 'infrastructure':
+      const facilityData = getFacilityData();
+      const locations = ['A区-01', 'A区-02', 'B区-01', 'B区-02'];
+      const today = new Date().toISOString().split('T')[0];
+
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <i class="ti ti-building"></i> 仓库设施管理
+          </h2>
+          <form onsubmit="handleInfrastructure(event)" class="space-y-4">
+            <select required name="location" class="p-3 border border-gray-300 rounded-lg">
+              <option value="">请选择仓位</option>
+              ${locations.map(loc => `<option value="${loc}">${loc}</option>`).join('')}
+            </select>
+            <input required name="date" type="date" value="${today}" class="p-3 border border-gray-300 rounded-lg"/>
+            <input required name="waterCount" type="number" placeholder="喂养水次数" class="p-3 border border-gray-300 rounded-lg"/>
+            <input required name="feedCount" type="number" placeholder="喂养饲料次数" class="p-3 border border-gray-300 rounded-lg"/>
+            <input required name="temperature" placeholder="仓内温度（℃）" class="p-3 border border-gray-300 rounded-lg"/>
+            <input required name="humidity" placeholder="仓内湿度（%）" class="p-3 border border-gray-300 rounded-lg"/>
+            <div class="bg-gray-100 p-3 rounded-lg text-sm">
+              记录人：${currentUser.name || currentUser.username} | 自动保存
             </div>
-          `;
-          break;
+            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 px-6 rounded-lg transition">
+              <i class="ti ti-save"></i> 保存设施数据
+            </button>
+          </form>
 
-        case 'staff':
-          if (currentUser.role !== 'admin') {
-            content.innerHTML = `<div class="bg-white p-8 rounded-2xl card text-red-600">❌ 权限不足</div>`;
-            return;
-          }
-          const staffRows = staffList.map(s => `
-            <tr class="border-b">
-              <td class="p-3">${s.name}</td>
-              <td>${s.username}</td>
-              <td>${s.permissions?.join(',') || '无'}</td>
-              <td><button onclick="deleteStaff('${s.username}')" class="text-red-600">删除</button></td>
-            </tr>
-          `).join('');
-          content.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl card">
-              <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <i class="ti ti-user"></i> 办事人员管理（最多5人）
-              </h2>
-              <form onsubmit="addStaff(event)" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <input required name="name" placeholder="姓名" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required name="username" placeholder="用户名" class="p-3 border border-gray-300 rounded-lg"/>
-                <input required type="password" name="password" placeholder="密码" class="p-3 border border-gray-300 rounded-lg"/>
-                <div class="md:col-span-3">
-                  <label class="block mb-2 font-medium">可操作模块：</label>
-                  <div class="flex flex-wrap gap-2">
-                    <label><input type="checkbox" name="perms" value="entry"> 进仓登记</label>
-                    <label><input type="checkbox" name="perms" value="list"> 牛只列表</label>
-                    <label><input type="checkbox" name="perms" value="search"> 信息查询</label>
-                    <label><input type="checkbox" name="perms" value="exit"> 出仓管理</label>
-                    <label><input type="checkbox" name="perms" value="transfer"> 活牛调仓</label>
-                    <label><input type="checkbox" name="perms" value="infrastructure"> 设施管理</label>
-                  </div>
-                </div>
-                <div class="md:col-span-3">
-                  <button type="submit" class="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded">添加人员</button>
-                </div>
-              </form>
+          <div class="mt-6">
+            <h3 class="font-bold text-lg mb-3">查看历史记录</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <select id="filter-location" class="p-3 border border-gray-300 rounded-lg" onchange="filterFacility()">
+                <option value="">全部仓位</option>
+                ${locations.map(loc => `<option value="${loc}">${loc}</option>`).join('')}
+              </select>
+              <input type="date" id="filter-date" class="p-3 border border-gray-300 rounded-lg" onchange="filterFacility()"/>
+              <button onclick="exportFacilityData()" class="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded">
+                导出筛选数据
+              </button>
+            </div>
+            <div class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead class="bg-gray-50">
                   <tr>
-                    <th class="p-3 text-left">姓名</th>
-                    <th>用户名</th>
-                    <th>权限</th>
-                    <th>操作</th>
+                    <th class="p-3">仓位</th>
+                    <th>日期</th>
+                    <th>喂水次数</th>
+                    <th>喂料次数</th>
+                    <th>温度</th>
+                    <th>湿度</th>
                   </tr>
                 </thead>
-                <tbody>${staffRows}</tbody>
+                <tbody id="facility-body">
+                  ${facilityData.map(f => `
+                    <tr class="border-b">
+                      <td class="p-3">${f.location}</td>
+                      <td>${f.date}</td>
+                      <td>${f.waterCount}</td>
+                      <td>${f.feedCount}</td>
+                      <td>${f.temp}℃</td>
+                      <td>${f.humidity}%</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
               </table>
             </div>
-          `;
-          break;
+          </div>
+        </div>
+      `;
+      break;
 
-        default:
-          content.innerHTML = `<div class="bg-white p-8 rounded-2xl card text-red-600">❌ 未知页面：${page}</div>`;
+    case 'transfer':
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <i class="ti ti-exchange"></i> 活牛调仓
+          </h2>
+          <div class="space-y-4">
+            <select onchange="showCattleForTransfer(this.value)" class="p-3 border border-gray-300 rounded-lg w-full">
+              <option value="">请选择原仓位</option>
+              <option value="A区-01">A区-01</option>
+              <option value="A区-02">A区-02</option>
+              <option value="B区-01">B区-01</option>
+              <option value="B区-02">B区-02</option>
+            </select>
+            <select id="transfer-cow-select" class="p-3 border border-gray-300 rounded-lg w-full" disabled>
+              <option value="">请先选择仓位</option>
+            </select>
+            <select id="newLocation" class="p-3 border border-gray-300 rounded-lg w-full">
+              <option value="">请选择目标仓位</option>
+              <option value="A区-01">A区-01</option>
+              <option value="A区-02">A区-02</option>
+              <option value="B区-01">B区-01</option>
+              <option value="B区-02">B区-02</option>
+            </select>
+            <button onclick="handleTransferSubmit()" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-lg transition">
+              <i class="ti ti-arrow-right"></i> 确认调仓
+            </button>
+          </div>
+        </div>
+      `;
+      break;
+
+    case 'staff':
+      if (currentUser.role !== 'admin') {
+        content.innerHTML = `<div class="bg-white p-8 rounded-2xl card text-red-600">❌ 权限不足：仅管理员可管理人员</div>`;
+        return;
       }
+      const staffRows = staffList.map(s => `
+        <tr class="border-b">
+          <td class="p-3">${s.name}</td>
+          <td>${s.username}</td>
+          <td>${s.permissions?.join(', ') || '无'}</td>
+          <td><button onclick="deleteStaff('${s.username}')" class="text-red-600 hover:text-red-800">删除</button></td>
+        </tr>
+      `).join('');
+      content.innerHTML = `
+        <div class="bg-white p-6 rounded-2xl card">
+          <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <i class="ti ti-user"></i> 办事人员管理（最多5人）
+          </h2>
+          <form onsubmit="addStaff(event)" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <input required name="name" placeholder="姓名" class="p-3 border border-gray-300 rounded-lg"/>
+            <input required name="username" placeholder="用户名" class="p-3 border border-gray-300 rounded-lg"/>
+            <input required type="password" name="password" placeholder="密码" class="p-3 border border-gray-300 rounded-lg"/>
+            <div class="md:col-span-3">
+              <label class="block mb-2 font-medium">可操作模块：</label>
+              <div class="flex flex-wrap gap-2">
+                <label><input type="checkbox" name="perms" value="entry"> 进仓登记</label>
+                <label><input type="checkbox" name="perms" value="list"> 牛只列表</label>
+                <label><input type="checkbox" name="perms" value="search"> 信息查询</label>
+                <label><input type="checkbox" name="perms" value="exit"> 出仓管理</label>
+                <label><input type="checkbox" name="perms" value="transfer"> 活牛调仓</label>
+                <label><input type="checkbox" name="perms" value="infrastructure"> 设施管理</label>
+              </div>
+            </div>
+            <div class="md:col-span-3">
+              <button type="submit" class="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded">添加人员</button>
+            </div>
+          </form>
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="p-3 text-left">姓名</th>
+                <th>用户名</th>
+                <th>权限</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>${staffRows}</tbody>
+          </table>
+        </div>
+      `;
+      break;
+
+    default:
+      content.innerHTML = `<div class="bg-white p-8 rounded-2xl card text-red-600">❌ 未知页面：${page}</div>`;
+  }
+}
+    // ======== 批次号生成函数 ========
+    function generateBatchId() {
+      document.getElementById('batchId').value = 'B' + Date.now();
     }
 
     // ======== 动态添加牛只条目 ========
@@ -547,22 +714,6 @@
       updateSummary();
     }
 
-    function addExitEntry() {
-      const container = document.getElementById('exit-entries');
-      const item = document.createElement('div');
-      item.className = 'exit-item grid grid-cols-1 md:grid-cols-5 gap-2 mb-2 border-b pb-2';
-      const options = Array.from(document.querySelectorAll('#exit-entries select[name="cowId"] option')).map(el => el.outerHTML).join('');
-      item.innerHTML = `
-        <select required name="cowId" class="p-2 border border-gray-300 rounded">${options}</select>
-        <input required type="number" name="finalWeight" placeholder="出仓体重（kg）" class="p-2 border border-gray-300 rounded"/>
-        <input required type="date" name="exitDate" class="p-2 border border-gray-300 rounded"/>
-        <input required name="destination" placeholder="运出单位" class="p-2 border border-gray-300 rounded"/>
-        <input required name="inspectionCert" placeholder="检疫证编号" class="p-2 border border-gray-300 rounded"/>
-      `;
-      container.appendChild(item);
-      updateExitSummary();
-    }
-
     // ======== 统计更新 ========
     function updateSummary() {
       const entries = document.querySelectorAll('#cattle-entries .cattle-item');
@@ -576,21 +727,8 @@
       document.getElementById('summary').innerHTML = `头数：${entries.length}，总重量：<span id="totalWeight">${totalWeight.toFixed(1)}</span> kg`;
     }
 
-    function updateExitSummary() {
-      const entries = document.querySelectorAll('#exit-entries .exit-item');
-      let totalWeight = 0;
-      entries.forEach(item => {
-        const weight = parseFloat(item.querySelector('[name="finalWeight"]').value) || 0;
-        totalWeight += weight;
-      });
-      document.getElementById('exitTotalWeight').textContent = totalWeight.toFixed(1);
-      document.getElementById('exitCount').textContent = entries.length;
-      document.getElementById('exitSummary').innerHTML = `头数：${entries.length}，总重量：<span id="exitTotalWeight">${totalWeight.toFixed(1)}</span> kg`;
-    }
-
     document.addEventListener('input', (e) => {
       if (e.target.closest('#cattle-entries')) updateSummary();
-      if (e.target.closest('#exit-entries')) updateExitSummary();
     }, true);
 
     // ======== 进仓处理 ========
@@ -629,7 +767,7 @@
           origin: '批次-' + batchId,
           entryDate,
           location,
-          health: '正常',
+          health: '健康',
           status: '在栏',
           inspectionCert,
           vehicleInfo,
@@ -663,166 +801,152 @@
       `;
       document.getElementById('print-entry').style.display = 'block';
       form.reset();
-      addCattleEntry(); // 重置后保留一条
+      addCattleEntry();
       setTimeout(() => showPage('list'), 1000);
     }
 
     // ======== 出仓处理 ========
-    function handleExit(e) {
-      e.preventDefault();
-      const form = e.target;
-      const entries = form.querySelectorAll('.exit-item');
-      const cattleList = getData();
-      let successCount = 0;
-      const exitCows = [];
-
-      entries.forEach(item => {
-        const cowId = item.querySelector('[name="cowId"]').value;
-        const finalWeight = item.querySelector('[name="finalWeight"]').value;
-        const exitDate = item.querySelector('[name="exitDate"]').value;
-        const destination = item.querySelector('[name="destination"]').value;
-        const inspectionCert = item.querySelector('[name="inspectionCert"]').value;
-
-        if (!cowId || !finalWeight || !exitDate || !destination) return;
-
-        const cow = cattleList.find(c => c.id === cowId);
-        if (!cow) return;
-
-        cow.status = '已出仓';
-        cow.exitDate = exitDate;
-        cow.destination = destination;
-        cow.finalWeight = parseFloat(finalWeight);
-        cow.inspectionCert = inspectionCert;
-        cow.history.push({ type: '出仓', date: exitDate, note: `运往${destination}` });
-        successCount++;
-        exitCows.push(cow);
+    function showCattleForExit(loc) {
+      const select = document.getElementById('exit-cow-select');
+      select.innerHTML = '<option value="">请选择牛只</option>';
+      if (!loc) {
+        select.disabled = true;
+        return;
+      }
+      select.disabled = false;
+      const list = getData().filter(c => c.location === loc && c.status === '在栏');
+      list.forEach(cow => {
+        const opt = document.createElement('option');
+        opt.value = cow.id;
+        opt.textContent = `${cow.id} - ${cow.breed} - ${cow.weight}kg`;
+        select.appendChild(opt);
       });
+    }
 
-      if (successCount === 0) {
-        alert('❌ 未出仓任何牛只');
+    function handleExitSubmit() {
+      const cowId = document.getElementById('exit-cow-select').value;
+      const exitDate = document.getElementById('exitDate').value;
+      const destination = document.getElementById('destination').value;
+      const finalWeight = document.getElementById('finalWeight').value;
+      const inspectionCert = document.getElementById('inspectionCert').value;
+      const vehicleInfo = document.getElementById('vehicleInfo').value;
+      const exitOperator = document.getElementById('exitOperator').value;
+
+      if (!cowId || !exitDate || !destination || !finalWeight || !exitOperator) {
+        alert('请填写完整信息');
         return;
       }
 
+      const cattleList = getData();
+      const cow = cattleList.find(c => c.id === cowId);
+      if (!cow) return;
+
+      cow.status = '已出仓';
+      cow.exitDate = exitDate;
+      cow.destination = destination;
+      cow.finalWeight = parseFloat(finalWeight);
+      cow.inspectionCert = inspectionCert;
+      cow.vehicleInfo = vehicleInfo;
+      cow.exitOperator = exitOperator;
+      cow.history.push({ type: '出仓', date: exitDate, note: `由${exitOperator}操作，运往${destination}` });
       saveData(cattleList);
-      alert(`✅ 成功出仓 ${successCount} 头牛！`);
+      alert('✅ 出仓成功！');
 
       document.getElementById('exit-print-content').innerHTML = `
-        <p><strong>出仓时间：</strong>${exitCows[0].exitDate}</p>
-        <p><strong>头数：</strong>${successCount} 头</p>
-        <p><strong>总重量：</strong>${exitCows.reduce((a, b) => a + b.finalWeight, 0).toFixed(1)} kg</p>
-        <p><strong>运出单位：</strong>${exitCows[0].destination}</p>
-        <h4 class="font-bold mt-3">出仓牛只：</h4>
-        <ul class="list-disc ml-5">
-          ${exitCows.map(c => `<li>${c.id} | ${c.breed} | ${c.finalWeight}kg | ${c.destination}</li>`).join('')}
-        </ul>
+        <table>
+          <tr><th>项目</th><th>信息</th></tr>
+          <tr><td>牛只ID</td><td>${cow.id}</td></tr>
+          <tr><td>品种</td><td>${cow.breed}</td></tr>
+          <tr><td>出仓日期</td><td>${exitDate}</td></tr>
+          <tr><td>运出单位</td><td>${destination}</td></tr>
+          <tr><td>出仓体重</td><td>${finalWeight}kg</td></tr>
+          <tr><td>检疫证</td><td>${inspectionCert}</td></tr>
+          <tr><td>车辆信息</td><td>${vehicleInfo}</td></tr>
+          <tr><td>出仓负责人</td><td>${exitOperator}</td></tr>
+        </table>
       `;
       document.getElementById('print-exit').style.display = 'block';
-      form.reset();
-      addExitEntry();
-      setTimeout(() => showPage('report'), 1000);
+      showPage('exit');
     }
 
-    // ======== 设施管理提交 ========
+    function exportExitList() {
+      const cattleList = getData();
+      const exited = cattleList.filter(c => c.status === '已出仓');
+      const exportData = exited.map(c => ({
+        '牛只ID': c.id,
+        '品种': c.breed,
+        '出仓日期': c.exitDate,
+        '运出单位': c.destination,
+        '出仓体重(kg)': c.finalWeight,
+        '负责人': c.exitOperator,
+        '车辆信息': c.vehicleInfo
+      }));
+      exportToExcel(exportData, '出仓明细_' + new Date().toLocaleDateString());
+    }
+
+    // ======== 设施管理 ========
     function handleInfrastructure(e) {
       e.preventDefault();
       const data = new FormData(e.target);
       const record = {
+        location: data.get('location'),
         date: data.get('date'),
-        water: data.get('waterUsage'),
-        electricity: data.get('electricityUsage'),
-        network: data.get('networkStatus'),
+        waterCount: data.get('waterCount'),
+        feedCount: data.get('feedCount'),
         temp: data.get('temperature'),
         humidity: data.get('humidity'),
         operator: currentUser.name || currentUser.username
       };
-      const key = 'infrastructure_' + record.date;
-      localStorage.setItem(key, JSON.stringify(record));
+      const list = getFacilityData();
+      list.push(record);
+      saveFacilityData(list);
       alert('✅ 设施数据已保存');
       e.target.reset();
+      setTimeout(() => showPage('infrastructure'), 100);
     }
 
-    // ======== 其他函数 ========
-    function exportCattleList() {
-      const list = getData();
-      const exportData = list.map(cow => ({
-        '牛只ID': cow.id,
-        '牛主': cow.owner,
-        'RFID': cow.rfid,
-        '品种': cow.breed,
-        '来源': cow.origin,
-        '体重': cow.weight,
-        '性别': cow.gender,
-        '栏位': cow.location,
-        '健康': cow.health,
-        '状态': cow.status,
-        '最后饲喂': cow.feedRecords?.length > 0 ? cow.feedRecords[cow.feedRecords.length-1].date : ''
+    function filterFacility() {
+      const loc = document.getElementById('filter-location').value;
+      const date = document.getElementById('filter-date').value;
+      const list = getFacilityData();
+      const filtered = list.filter(f => 
+        (!loc || f.location === loc) &&
+        (!date || f.date === date)
+      );
+      const tbody = document.getElementById('facility-body');
+      tbody.innerHTML = filtered.map(f => `
+        <tr class="border-b">
+          <td class="p-3">${f.location}</td>
+          <td>${f.date}</td>
+          <td>${f.waterCount}</td>
+          <td>${f.feedCount}</td>
+          <td>${f.temp}℃</td>
+          <td>${f.humidity}%</td>
+        </tr>
+      `).join('');
+    }
+
+    function exportFacilityData() {
+      const loc = document.getElementById('filter-location').value;
+      const date = document.getElementById('filter-date').value;
+      const list = getFacilityData();
+      const filtered = list.filter(f => 
+        (!loc || f.location === loc) &&
+        (!date || f.date === date)
+      );
+      const exportData = filtered.map(f => ({
+        '仓位': f.location,
+        '日期': f.date,
+        '喂水次数': f.waterCount,
+        '喂料次数': f.feedCount,
+        '温度(℃)': f.temp,
+        '湿度(%)': f.humidity,
+        '记录人': f.operator
       }));
-      exportToExcel(exportData, '海露保供仓_牛只列表_' + new Date().toLocaleDateString());
+      exportToExcel(exportData, '设施管理数据_' + new Date().toLocaleDateString());
     }
 
-    function filterByLocation(loc) {
-      const list = getData();
-      const filtered = loc ? list.filter(c => c.location === loc) : list;
-      const tbody = document.getElementById('list-body');
-      if (!tbody) return;
-      tbody.innerHTML = filtered.map(cow => {
-        const lastFeed = cow.feedRecords?.length > 0 ? cow.feedRecords[cow.feedRecords.length - 1].date : '未记录';
-        return `
-          <tr class="border-b hover:bg-gray-50">
-            <td class="p-3">${cow.id}</td>
-            <td>${cow.rfid}</td>
-            <td>${cow.breed}</td>
-            <td>${cow.location}</td>
-            <td><span class="px-2 py-1 rounded-full text-xs ${cow.health.includes('正常') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${cow.health}</span></td>
-            <td>${lastFeed}</td>
-            <td>${cow.status === '已出仓' ? cow.exitDate : '在栏'}</td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    function filterByHealth(health) {
-      if (!health.trim()) return filterByLocation(document.querySelector('select[onchange="filterByLocation(this.value)"]').value);
-      const list = getData();
-      const filtered = list.filter(c => c.health.includes(health));
-      const tbody = document.getElementById('list-body');
-      tbody.innerHTML = filtered.map(cow => {
-        const lastFeed = cow.feedRecords?.length > 0 ? cow.feedRecords[cow.feedRecords.length - 1].date : '未记录';
-        return `
-          <tr class="border-b hover:bg-gray-50">
-            <td class="p-3">${cow.id}</td>
-            <td>${cow.rfid}</td>
-            <td>${cow.breed}</td>
-            <td>${cow.location}</td>
-            <td><span class="px-2 py-1 rounded-full text-xs ${cow.health.includes('正常') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${cow.health}</span></td>
-            <td>${lastFeed}</td>
-            <td>${cow.status === '已出仓' ? cow.exitDate : '在栏'}</td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    function filterByBreed(breed) {
-      if (!breed.trim()) return filterByLocation(document.querySelector('select[onchange="filterByLocation(this.value)"]').value);
-      const list = getData();
-      const filtered = list.filter(c => c.breed.includes(breed));
-      const tbody = document.getElementById('list-body');
-      tbody.innerHTML = filtered.map(cow => {
-        const lastFeed = cow.feedRecords?.length > 0 ? cow.feedRecords[cow.feedRecords.length - 1].date : '未记录';
-        return `
-          <tr class="border-b hover:bg-gray-50">
-            <td class="p-3">${cow.id}</td>
-            <td>${cow.rfid}</td>
-            <td>${cow.breed}</td>
-            <td>${cow.location}</td>
-            <td><span class="px-2 py-1 rounded-full text-xs ${cow.health.includes('正常') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${cow.health}</span></td>
-            <td>${lastFeed}</td>
-            <td>${cow.status === '已出仓' ? cow.exitDate : '在栏'}</td>
-          </tr>
-        `;
-      }).join('');
-    }
-
+    // ======== 信息查询 ========
     function showCattleByLocation(loc) {
       const resultDiv = document.getElementById('search-result');
       if (!loc) {
@@ -830,20 +954,45 @@
         return;
       }
       const list = getData().filter(c => c.location === loc);
+      const facility = getFacilityData().filter(f => f.location === loc).sort((a,b) => b.date.localeCompare(a.date))[0] || {};
       if (list.length === 0) {
         resultDiv.innerHTML = '<div class="text-gray-500">该仓位暂无牛只</div>';
         return;
       }
       resultDiv.innerHTML = `
+        <div class="bg-blue-50 p-4 rounded-lg mb-4">
+          <h4 class="font-bold">设施信息（${loc}）</h4>
+          <p>喂水次数：${facility.waterCount || '未记录'}</p>
+          <p>喂料次数：${facility.feedCount || '未记录'}</p>
+          <p>温度：${facility.temp || '—'}℃ | 湿度：${facility.humidity || '—'}%</p>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm border">
-            <tr class="bg-gray-50"><th>ID</th><th>品种</th><th>健康</th><th>状态</th></tr>
-            ${list.map(c => `<tr class="text-center border-t"><td>${c.id}</td><td>${c.breed}</td><td>${c.health}</td><td>${c.status}</td></tr>`).join('')}
+            <tr class="bg-gray-50"><th>ID</th><th>品种</th><th>进仓时间</th><th>健康</th><th>备注</th></tr>
+            ${list.map(c => `
+              <tr class="text-center border-t">
+                <td>${c.id}</td>
+                <td>${c.breed}</td>
+                <td>${c.entryDate}</td>
+                <td>${c.health}</td>
+                <td><input type="text" placeholder="健康" value="${c.health}" onchange="updateCowHealth('${c.id}', this.value)" class="p-1 border border-gray-300 rounded text-center w-20"></td>
+              </tr>
+            `).join('')}
           </table>
         </div>
       `;
     }
 
+    function updateCowHealth(id, health) {
+      const list = getData();
+      const cow = list.find(c => c.id === id);
+      if (cow) {
+        cow.health = health || '健康';
+        saveData(list);
+      }
+    }
+
+    // ======== 调仓 ========
     function showCattleForTransfer(loc) {
       const select = document.getElementById('transfer-cow-select');
       select.innerHTML = '<option value="">请选择牛只</option>';
@@ -878,37 +1027,126 @@
       alert(`✅ 调仓成功：${cow.id} 从 ${oldLoc} 调至 ${newLoc}`);
     }
 
-    function addStaff(e) {
-      e.preventDefault();
-      const form = e.target;
-      const data = new FormData(form);
-      const staffList = getStaff();
-      if (staffList.length >= 5) {
-        alert('❌ 最多只能添加5名办事人员');
-        return;
-      }
-      const perms = [];
-      form.querySelectorAll('[name="perms"]:checked').forEach(cb => perms.push(cb.value));
-      const newStaff = {
-        name: data.get('name'),
-        username: data.get('username'),
-        password: data.get('password'),
-        role: 'staff',
-        permissions: perms
-      };
-      staffList.push(newStaff);
-      saveStaff(staffList);
-      alert('✅ 办事人员添加成功');
-      form.reset();
-      showPage('staff');
-    }
-
-    function deleteStaff(username) {
-      if (!confirm(`确定删除 ${username}？`)) return;
-      const list = getStaff().filter(s => s.username !== username);
-      saveStaff(list);
-      showPage('staff');
+    // ======== 其他函数 ========
+    function exportCattleList() {
+      const list = getData();
+      const exportData = list.map(cow => ({
+        '牛只ID': cow.id,
+        'RFID': cow.rfid,
+        '品种': cow.breed,
+        '来源': cow.origin,
+        '体重': cow.weight,
+        '性别': cow.gender,
+        '栏位': cow.location,
+        '进仓时间': cow.entryDate,
+        '健康': cow.health,
+        '状态': cow.status
+      }));
+      exportToExcel(exportData, '牛只列表_' + new Date().toLocaleDateString());
     }
   </script>
+ <script>
+// ======== 添加办事人员 ========
+function addStaff(e) {
+  e.preventDefault(); // 阻止表单默认提交
+  const form = e.target;
+  const data = new FormData(form);
+  const staffList = getStaff();
+
+  // 检查人数上限
+  if (staffList.length >= 5) {
+    alert('❌ 最多只能添加5名办事人员');
+    return;
+  }
+
+  // 收集权限
+  const perms = [];
+  form.querySelectorAll('[name="perms"]:checked').forEach(cb => {
+    perms.push(cb.value);
+  });
+
+  // 创建新人员
+  const newStaff = {
+    name: data.get('name'),
+    username: data.get('username'),
+    password: data.get('password'),
+    role: 'staff',
+    permissions: perms
+  };
+
+  // 保存
+  staffList.push(newStaff);
+  saveStaff(staffList);
+
+  alert('✅ 办事人员添加成功');
+  form.reset(); // 重置表单
+  showPage('staff'); // 重新加载人员管理页
+}
+
+// ======== 删除办事人员 ========
+function deleteStaff(username) {
+  if (!confirm(`确定删除 ${username}？`)) return;
+  const list = getStaff().filter(s => s.username !== username);
+  saveStaff(list);
+  showPage('staff'); // 刷新页面
+}
+</script>
+<script>
+// ======== 查询出仓历史记录 ========
+function filterExitRecords() {
+  const cattleList = getData();
+  const exited = cattleList.filter(c => c.status === '已出仓');
+  const loc = document.getElementById('exit-filter-location').value;
+  const date = document.getElementById('exit-filter-date').value;
+  const dest = document.getElementById('exit-filter-destination').value?.toLowerCase();
+  const cert = document.getElementById('exit-filter-cert').value?.toLowerCase();
+  const vehicle = document.getElementById('exit-filter-vehicle').value?.toLowerCase();
+
+  const filtered = exited.filter(c => {
+    return (!loc || c.location === loc) &&
+           (!date || c.exitDate === date) &&
+           (!dest || c.destination?.toLowerCase().includes(dest)) &&
+           (!cert || c.inspectionCert?.toLowerCase().includes(cert)) &&
+           (!vehicle || c.vehicleInfo?.toLowerCase().includes(vehicle));
+  });
+
+  const tbody = document.getElementById('exit-records-table').querySelector('tbody');
+  tbody.innerHTML = filtered.map(c => `
+    <tr class="border-b">
+      <td class="p-3">${c.id}</td>
+      <td>${c.breed}</td>
+      <td>${c.exitDate}</td>
+      <td>${c.destination}</td>
+      <td>${c.finalWeight}</td>
+      <td>${c.vehicleInfo}</td>
+      <td>${c.exitOperator}</td>
+    </tr>
+  `).join('');
+}
+
+// ======== 导出出仓明细 ========
+function exportExitList() {
+  const tbody = document.getElementById('exit-records-table').querySelector('tbody');
+  if (tbody.children.length === 0) {
+    alert('❌ 当前查询结果为空，无法导出');
+    return;
+  }
+
+  const data = [];
+  for (let row of tbody.children) {
+    const cells = row.children;
+    data.push({
+      '牛只ID': cells[0].textContent,
+      '品种': cells[1].textContent,
+      '出仓日期': cells[2].textContent,
+      '运出单位': cells[3].textContent,
+      '体重(kg)': cells[4].textContent,
+      '车辆信息': cells[5].textContent,
+      '负责人': cells[6].textContent
+    });
+  }
+  exportToExcel(data, '出仓明细_' + new Date().toLocaleDateString());
+}
+</script>
 </body>
 </html>
